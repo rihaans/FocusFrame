@@ -1,0 +1,41 @@
+sampling:
+  emotion_interval_seconds: 5
+  decision_interval_seconds: 5
+  demo_notification_period_seconds: 30
+
+deferral:
+  focus_deferral_minutes: 15
+  sad_deferral_minutes: 10
+
+batching:
+  enabled: true
+  release_interval_minutes: 25
+
+apps:
+  focus:
+    - Code.exe
+    - code.exe
+    - devenv.exe
+    - pycharm64.exe
+    - idea64.exe
+    - studio64.exe
+    - Xorg
+    - code-oss
+  casual:
+    - chrome.exe
+    - msedge.exe
+    - firefox.exe
+    - brave.exe
+    - whatsapp.exe
+    - Telegram.exe
+    - discord.exe
+    - vlc.exe
+    - Spotify.exe
+
+notifications:
+  title_prefix: "[FocusFrame]"
+  demo_payloads:
+    - "Email: Standup at 10:00"
+    - "Chat: Review PR #128"
+    - "Reminder: Hydrate"
+    - "Issue: Build failed on CI"

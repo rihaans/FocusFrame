@@ -1,20 +1,19 @@
-import argparse
+﻿import argparse
 import random
-import time
 import threading
-from typing import Optional
+import time
+from typing import Callable, Optional
 
-from .config import load_config
-from .emotion import EmotionDetector
-from .apptracker import get_foreground_process_name
-from .rules import map_app_category, decide_action
-from .scheduler import Scheduler, Notification
-from .notify import show_notification
-from .storage import Store
-from .dashboard import Dashboard
-
-# ✅ Console colors
 from colorama import Fore, Style, init as colorama_init
+
+from .apptracker import get_foreground_process_name
+from .config import load_config
+from .dashboard import Dashboard
+from .notify import show_notification
+from .rules import decide_action, map_app_category
+from .scheduler import Notification, Scheduler
+from .storage import Store
+
 colorama_init(autoreset=True)
 
 
@@ -24,18 +23,67 @@ def colorize_emotion(emotion: str, score: float) -> str:
 
     if emo in {"angry", "fear", "disgust"}:
         return Fore.RED + text + Style.RESET_ALL
-    elif emo == "sad":
+    if emo == "sad":
         return Fore.MAGENTA + text + Style.RESET_ALL
-    elif emo == "happy":
+    if emo == "happy" or emo == "happiness":
         return Fore.GREEN + text + Style.RESET_ALL
-    elif emo == "neutral":
+    if emo == "neutral":
         return Fore.YELLOW + text + Style.RESET_ALL
-    elif emo == "surprise":
+    if emo == "surprise":
         return Fore.CYAN + text + Style.RESET_ALL
+    if emo == "contempt":
+        return Fore.BLUE + text + Style.RESET_ALL
+    if emo == "unknown":
+        return Fore.WHITE + text + Style.RESET_ALL
     return text
 
 
-def main():
+def build_detector(args, cfg) -> tuple[object, Callable[[], Optional[tuple[str, float]]], str]:
+    accuracy = cfg.accuracy
+    smoothing = accuracy.get("smoothing", {})
+    backend = str(cfg.raw.get("emotion_backend", "fer")).lower()
+
+    if backend == "onnx":
+        from .onnx_emotion import ONNXEmotionDetector as EDetector
+
+        onnx_cfg = cfg.onnx
+        model_path = onnx_cfg.get("model_path", "models/emotion-ferplus-8.onnx")
+        labels = onnx_cfg.get("labels", "ferplus8")
+        input_size = tuple(onnx_cfg.get("input_size", [64, 64]))
+
+        detector = EDetector(
+            model_path=model_path,
+            labels=labels,
+            input_size=input_size,
+            conf_threshold=float(accuracy.get("conf_threshold", 0.55)),
+            min_face_size_px=int(accuracy.get("min_face_size_px", 80)),
+        )
+
+        def reader() -> Optional[tuple[str, float]]:
+            return detector.read_emotion(camera_index=args.camera)
+
+        backend_name = "onnx"
+    else:
+        from .emotion import EmotionDetector as EDetector
+
+        detector = EDetector(
+            camera_index=args.camera,
+            ema_alpha=float(smoothing.get("ema_alpha", 0.6)),
+            window=int(smoothing.get("window", 7)),
+            conf_threshold=float(accuracy.get("conf_threshold", 0.55)),
+            min_face_size_px=int(accuracy.get("min_face_size_px", 80)),
+            unknown_label=str(accuracy.get("unknown_label", "unknown")),
+        )
+
+        def reader() -> Optional[tuple[str, float]]:
+            return detector.read_emotion()
+
+        backend_name = "fer"
+
+    return detector, reader, backend_name
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description="FocusFrame Local MVP")
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--demo", action="store_true")
@@ -43,18 +91,19 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    detector, emotion_reader, backend_name = build_detector(args, cfg)
     store = Store()
-    detector = EmotionDetector(camera_index=args.camera)
     scheduler = Scheduler(batch_release_minutes=cfg.batching["release_interval_minutes"])
-    dashboard = Dashboard()  # ✅ Tkinter dashboard
+    dashboard = Dashboard()
 
-    print("[FocusFrame] Starting local MVP…")
+    print("[FocusFrame] Starting local MVP")
+    print(f"- Emotion backend: {backend_name}")
     print(f"- Emotion interval: {cfg.sampling['emotion_interval_seconds']}s")
     print(f"- Decision interval: {cfg.sampling['decision_interval_seconds']}s")
     if args.demo:
         print(f"- Demo notifications every {cfg.sampling['demo_notification_period_seconds']}s")
 
-    def focusframe_loop():
+    def focusframe_loop() -> None:
         nonlocal detector, store, scheduler, dashboard
         next_emotion_ts = 0.0
         next_decision_ts = 0.0
@@ -62,16 +111,14 @@ def main():
 
         last_emotion: Optional[str] = None
         last_emotion_score: float = 0.0
-        last_app: Optional[str] = None
-        pending_inbox = []
+        pending_inbox: list[Notification] = []
 
         try:
             while True:
                 now = time.time()
 
-                # 1) Emotion sampling
                 if now >= next_emotion_ts:
-                    emo = detector.read_emotion()
+                    emo = emotion_reader()
                     if emo:
                         last_emotion, last_emotion_score = emo
                         print("[Emotion]", colorize_emotion(last_emotion, last_emotion_score))
@@ -83,21 +130,20 @@ def main():
                         last_emotion = None
                     next_emotion_ts = now + cfg.sampling["emotion_interval_seconds"]
 
-                # 2) App sampling
                 last_app = get_foreground_process_name()
                 store.log("app", last_app)
 
-                # 3) Demo notifications
                 if args.demo and now >= next_demo_ts:
                     msg = random.choice(cfg.notifications["demo_payloads"])
-                    pending_inbox.append(Notification(title=f"{cfg.notifications['title_prefix']} Demo", message=msg))
+                    pending_inbox.append(
+                        Notification(title=f"{cfg.notifications['title_prefix']} Demo", message=msg)
+                    )
                     store.log("notification", f"demo_enqueued:{msg}")
                     next_demo_ts = now + cfg.sampling["demo_notification_period_seconds"]
 
-                # 4) Decision making
                 if now >= next_decision_ts and pending_inbox:
                     app_cat = map_app_category(last_app, cfg.apps["focus"], cfg.apps["casual"])
-                    carry = []
+                    carry: list[Notification] = []
                     for note in pending_inbox:
                         action, reason, minutes = decide_action(
                             emotion=(last_emotion or "neutral"),
@@ -109,37 +155,45 @@ def main():
                         store.log("decision", f"{action}:{reason}:{minutes}m for {note.message}")
 
                         if action == "deliver":
-                            print(Fore.GREEN + f"[Deliver] {note.message} • ({reason})" + Style.RESET_ALL)
-                            show_notification(note.title, f"{note.message}  • ({reason})")
+                            print(Fore.GREEN + f"[Deliver] {note.message} ({reason})" + Style.RESET_ALL)
+                            show_notification(note.title, f"{note.message} ({reason})")
                         elif action == "defer":
-                            print(Fore.YELLOW + f"[Defer] {note.message} for {minutes}m • ({reason})" + Style.RESET_ALL)
+                            print(
+                                Fore.YELLOW
+                                + f"[Defer] {note.message} for {minutes}m ({reason})"
+                                + Style.RESET_ALL
+                            )
                             scheduler.defer(note, minutes)
                         elif action == "batch":
-                            print(Fore.CYAN + f"[Batch] {note.message} (will release later) • ({reason})" + Style.RESET_ALL)
+                            print(
+                                Fore.CYAN
+                                + f"[Batch] {note.message} (will release later) ({reason})"
+                                + Style.RESET_ALL
+                            )
                             scheduler.batch(note)
                         else:
                             carry.append(note)
                     pending_inbox = carry
                     next_decision_ts = now + cfg.sampling["decision_interval_seconds"]
 
-                # 5) Release due notifications
                 due = scheduler.release_due()
-                for n in due:
-                    print(Fore.MAGENTA + f"[Release] {n.message}" + Style.RESET_ALL)
-                    show_notification(f"{cfg.notifications['title_prefix']} Release", n.message + "  • (released)")
+                for released in due:
+                    print(Fore.MAGENTA + f"[Release] {released.message}" + Style.RESET_ALL)
+                    show_notification(
+                        f"{cfg.notifications['title_prefix']} Release",
+                        f"{released.message} (released)",
+                    )
 
                 time.sleep(0.2)
         except KeyboardInterrupt:
-            print("\n[FocusFrame] Stopping…")
+            print("\n[FocusFrame] Stopping")
         finally:
             detector.close()
             store.close()
 
-    # Run focusframe loop in background thread
-    t = threading.Thread(target=focusframe_loop, daemon=True)
-    t.start()
+    worker = threading.Thread(target=focusframe_loop, daemon=True)
+    worker.start()
 
-    # Run dashboard in main thread
     dashboard.run()
 
 

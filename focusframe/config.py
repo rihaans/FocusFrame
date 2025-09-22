@@ -1,12 +1,14 @@
-from dataclasses import dataclass, field
-from typing import List, Dict, Any
-import yaml
+from dataclasses import dataclass
+from typing import Dict, Any
+import copy
 import os
+import yaml
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "emotion_backend": "fer",
     "sampling": {
-        "emotion_interval_seconds": 5,
-        "decision_interval_seconds": 5,
+        "emotion_interval_seconds": 1,
+        "decision_interval_seconds": 2,
         "demo_notification_period_seconds": 30,
     },
     "deferral": {
@@ -17,39 +19,77 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "release_interval_minutes": 25,
     },
-    "apps": {"focus": [], "casual": []},
+    "accuracy": {
+        "conf_threshold": 0.5,
+        "min_face_size_px": 60,
+        "unknown_label": "unknown",
+        "smoothing": {
+            "ema_alpha": 0.5,
+            "window": 3,
+        },
+    },
+    "onnx": {
+        "model_path": "models/emotion-ferplus-8.onnx",
+        "labels": "ferplus8",
+        "input_size": [64, 64],
+    },
+    "apps": {
+        "focus": [],
+        "casual": [],
+    },
     "notifications": {
         "title_prefix": "[FocusFrame]",
         "demo_payloads": ["Demo notification"],
     },
 }
 
+
 @dataclass
 class Config:
     raw: Dict[str, Any]
 
     @property
-    def sampling(self): return self.raw["sampling"]
+    def sampling(self) -> Dict[str, Any]:
+        return self.raw["sampling"]
+
     @property
-    def deferral(self): return self.raw["deferral"]
+    def deferral(self) -> Dict[str, Any]:
+        return self.raw["deferral"]
+
     @property
-    def batching(self): return self.raw["batching"]
+    def batching(self) -> Dict[str, Any]:
+        return self.raw["batching"]
+
     @property
-    def apps(self): return self.raw["apps"]
+    def accuracy(self) -> Dict[str, Any]:
+        return self.raw.get("accuracy", {})
+
     @property
-    def notifications(self): return self.raw["notifications"]
+    def apps(self) -> Dict[str, Any]:
+        return self.raw["apps"]
+
+    @property
+    def notifications(self) -> Dict[str, Any]:
+        return self.raw["notifications"]
+
+    @property
+    def onnx(self) -> Dict[str, Any]:
+        return self.raw.get("onnx", {})
+
 
 def load_config(path: str = "config.yaml") -> Config:
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            user = yaml.safe_load(f) or {}
+        with open(path, "r", encoding="utf-8") as handle:
+            user = yaml.safe_load(handle) or {}
     else:
         user = {}
-    merged = DEFAULT_CONFIG.copy()
-    # shallow merge for brevity
-    for k, v in user.items():
-        if isinstance(v, dict) and k in merged:
-            merged[k].update(v)
+
+    merged: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
+
+    for key, value in user.items():
+        if isinstance(value, dict) and key in merged and isinstance(merged[key], dict):
+            merged[key].update(value)
         else:
-            merged[k] = v
+            merged[key] = value
+
     return Config(merged)

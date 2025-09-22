@@ -1,4 +1,4 @@
-# Core
+﻿# Core
 numpy==2.2.2
 opencv-python==4.10.0.84
 
@@ -8,7 +8,7 @@ fer==22.5.1
 # Video handling
 moviepy==1.0.3
 imageio==2.34.1
-decorator==5.1.1
+decorator==4.4.2
 
 # System
 psutil==5.9.8
@@ -22,3 +22,5 @@ PyYAML==6.0.2
 
 # Optional analytics
 pandas==2.2.3
+
+onnxruntime==1.22.1

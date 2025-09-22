@@ -95,6 +95,7 @@ def main() -> None:
     store = Store()
     scheduler = Scheduler(batch_release_minutes=cfg.batching["release_interval_minutes"])
     dashboard = Dashboard()
+    stop_event = threading.Event()
 
     print("[FocusFrame] Starting local MVP")
     print(f"- Emotion backend: {backend_name}")
@@ -113,89 +114,101 @@ def main() -> None:
         last_emotion_score: float = 0.0
         pending_inbox: list[Notification] = []
 
-        try:
-            while True:
-                now = time.time()
+        while not stop_event.is_set():
+            now = time.time()
 
-                if now >= next_emotion_ts:
-                    emo = emotion_reader()
-                    if emo:
-                        last_emotion, last_emotion_score = emo
-                        print("[Emotion]", colorize_emotion(last_emotion, last_emotion_score))
-                        store.log("emotion", f"{last_emotion}:{last_emotion_score:.3f}")
-                        show_notification("Emotion Detected", f"{last_emotion} ({last_emotion_score:.2f})")
-                        dashboard.push_emotion(last_emotion, last_emotion_score)
-                    else:
-                        print("[Emotion] No face detected")
-                        last_emotion = None
-                    next_emotion_ts = now + cfg.sampling["emotion_interval_seconds"]
+            if now >= next_emotion_ts:
+                emo = emotion_reader()
+                if emo:
+                    last_emotion, last_emotion_score = emo
+                    print("[Emotion]", colorize_emotion(last_emotion, last_emotion_score))
+                    store.log("emotion", f"{last_emotion}:{last_emotion_score:.3f}")
+                    show_notification("Emotion Detected", f"{last_emotion} ({last_emotion_score:.2f})")
+                    dashboard.push_emotion(last_emotion, last_emotion_score)
+                else:
+                    print("[Emotion] No face detected")
+                    last_emotion = None
+                next_emotion_ts = now + cfg.sampling["emotion_interval_seconds"]
 
-                last_app = get_foreground_process_name()
-                store.log("app", last_app)
+            last_app = get_foreground_process_name()
+            store.log("app", last_app)
 
-                if args.demo and now >= next_demo_ts:
-                    msg = random.choice(cfg.notifications["demo_payloads"])
-                    pending_inbox.append(
-                        Notification(title=f"{cfg.notifications['title_prefix']} Demo", message=msg)
+            if args.demo and now >= next_demo_ts:
+                msg = random.choice(cfg.notifications["demo_payloads"])
+                pending_inbox.append(
+                    Notification(title=f"{cfg.notifications['title_prefix']} Demo", message=msg)
+                )
+                store.log("notification", f"demo_enqueued:{msg}")
+                next_demo_ts = now + cfg.sampling["demo_notification_period_seconds"]
+
+            if now >= next_decision_ts and pending_inbox:
+                app_cat = map_app_category(last_app, cfg.apps["focus"], cfg.apps["casual"])
+                carry: list[Notification] = []
+                for note in pending_inbox:
+                    action, reason, minutes = decide_action(
+                        emotion=(last_emotion or "neutral"),
+                        app_category=app_cat,
+                        focus_deferral_minutes=cfg.deferral["focus_deferral_minutes"],
+                        sad_deferral_minutes=cfg.deferral["sad_deferral_minutes"],
+                        batching_enabled=cfg.batching["enabled"],
                     )
-                    store.log("notification", f"demo_enqueued:{msg}")
-                    next_demo_ts = now + cfg.sampling["demo_notification_period_seconds"]
+                    store.log("decision", f"{action}:{reason}:{minutes}m for {note.message}")
 
-                if now >= next_decision_ts and pending_inbox:
-                    app_cat = map_app_category(last_app, cfg.apps["focus"], cfg.apps["casual"])
-                    carry: list[Notification] = []
-                    for note in pending_inbox:
-                        action, reason, minutes = decide_action(
-                            emotion=(last_emotion or "neutral"),
-                            app_category=app_cat,
-                            focus_deferral_minutes=cfg.deferral["focus_deferral_minutes"],
-                            sad_deferral_minutes=cfg.deferral["sad_deferral_minutes"],
-                            batching_enabled=cfg.batching["enabled"],
+                    if action == "deliver":
+                        print(Fore.GREEN + f"[Deliver] {note.message} ({reason})" + Style.RESET_ALL)
+                        show_notification(note.title, f"{note.message} ({reason})")
+                    elif action == "defer":
+                        print(
+                            Fore.YELLOW
+                            + f"[Defer] {note.message} for {minutes}m ({reason})"
+                            + Style.RESET_ALL
                         )
-                        store.log("decision", f"{action}:{reason}:{minutes}m for {note.message}")
+                        scheduler.defer(note, minutes)
+                    elif action == "batch":
+                        print(
+                            Fore.CYAN
+                            + f"[Batch] {note.message} (will release later) ({reason})"
+                            + Style.RESET_ALL
+                        )
+                        scheduler.batch(note)
+                    else:
+                        carry.append(note)
+                pending_inbox = carry
+                next_decision_ts = now + cfg.sampling["decision_interval_seconds"]
 
-                        if action == "deliver":
-                            print(Fore.GREEN + f"[Deliver] {note.message} ({reason})" + Style.RESET_ALL)
-                            show_notification(note.title, f"{note.message} ({reason})")
-                        elif action == "defer":
-                            print(
-                                Fore.YELLOW
-                                + f"[Defer] {note.message} for {minutes}m ({reason})"
-                                + Style.RESET_ALL
-                            )
-                            scheduler.defer(note, minutes)
-                        elif action == "batch":
-                            print(
-                                Fore.CYAN
-                                + f"[Batch] {note.message} (will release later) ({reason})"
-                                + Style.RESET_ALL
-                            )
-                            scheduler.batch(note)
-                        else:
-                            carry.append(note)
-                    pending_inbox = carry
-                    next_decision_ts = now + cfg.sampling["decision_interval_seconds"]
+            due = scheduler.release_due()
+            for released in due:
+                print(Fore.MAGENTA + f"[Release] {released.message}" + Style.RESET_ALL)
+                show_notification(
+                    f"{cfg.notifications['title_prefix']} Release",
+                    f"{released.message} (released)",
+                )
 
-                due = scheduler.release_due()
-                for released in due:
-                    print(Fore.MAGENTA + f"[Release] {released.message}" + Style.RESET_ALL)
-                    show_notification(
-                        f"{cfg.notifications['title_prefix']} Release",
-                        f"{released.message} (released)",
-                    )
+            if stop_event.wait(0.2):
+                break
 
-                time.sleep(0.2)
-        except KeyboardInterrupt:
-            print("\n[FocusFrame] Stopping")
-        finally:
-            detector.close()
-            store.close()
-
-    worker = threading.Thread(target=focusframe_loop, daemon=True)
+    worker = threading.Thread(target=focusframe_loop, name="focusframe-loop", daemon=False)
     worker.start()
 
-    dashboard.run()
+    try:
+        dashboard.run()
+    except KeyboardInterrupt:
+        print("\n[FocusFrame] Interrupted by user")
+    finally:
+        stop_event.set()
+        try:
+            dashboard.stop()
+        except AttributeError:
+            pass
+        worker.join(timeout=3.0)
+        if worker.is_alive():
+            print("[FocusFrame] Waiting for background loop to finish...")
+        detector.close()
+        store.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[FocusFrame] Interrupted during startup")

@@ -16,11 +16,12 @@ class Dashboard:
         self.root.geometry("760x460")
         self.root.configure(bg="#10131a")
         self.root.minsize(720, 420)
+        self.root.protocol("WM_DELETE_WINDOW", self.stop)
 
         self.style = ttk.Style(self.root)
         try:
             self.style.theme_use("clam")
-        except tk.TclError:
+        except (tk.TclError, RuntimeError):
             pass
         self.style.configure("Card.TFrame", background="#151b29")
         self.style.configure("Card.TLabel", background="#151b29", foreground="#f5f5f5", font=("Segoe UI", 12))
@@ -186,5 +187,17 @@ class Dashboard:
     def push_emotion(self, emotion: str, score: float) -> None:
         self.queue.put((emotion, score))
 
+    def stop(self) -> None:
+        try:
+            self.root.quit()
+        except (tk.TclError, RuntimeError):
+            pass
+
     def run(self) -> None:
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            try:
+                self.root.destroy()
+            except (tk.TclError, RuntimeError):
+                pass

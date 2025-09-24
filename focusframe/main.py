@@ -12,7 +12,7 @@ from .dashboard import Dashboard
 from .notify import show_notification
 from .rules import decide_action, map_app_category
 from .scheduler import Notification, Scheduler
-from .storage import Store
+from .storage import Store  
 
 colorama_init(autoreset=True)
 

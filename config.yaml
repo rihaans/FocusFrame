@@ -5,6 +5,40 @@ sampling:
   decision_interval_seconds: 2
   demo_notification_period_seconds: 30
 
+notifications:
+  title_prefix: "[FocusFrame]"
+  poll_interval_seconds: 5
+  demo_payloads:
+    - "Email: Standup at 10:00"
+    - "Chat: Review PR #128"
+    - "Reminder: Hydrate"
+    - "Issue: Build failed on CI"
+  sources:
+    - id: "demo"
+      type: "demo"
+      enabled: true
+      interval_seconds: 30
+    - id: "local_file"
+      type: "file"
+      enabled: false
+      path: "profiles/inbox.jsonl"
+      category: "general"
+    - id: "local_drop"
+      type: "directory"
+      enabled: false
+      path: "profiles/inbox_drop"
+      pattern: "*.json"
+      archive_path: "profiles/archive"
+    - id: "imap"
+      type: "imap"
+      enabled: false
+      host: "imap.example.com"
+      username: "user@example.com"
+      password: "app-password"
+      mailbox: "INBOX"
+      use_ssl: true
+      limit: 5
+
 deferral:
   focus_deferral_minutes: 15
   sad_deferral_minutes: 10
@@ -47,10 +81,24 @@ apps:
     - vlc.exe
     - Spotify.exe
 
-notifications:
-  title_prefix: "[FocusFrame]"
-  demo_payloads:
-    - "Email: Standup at 10:00"
-    - "Chat: Review PR #128"
-    - "Reminder: Hydrate"
-    - "Issue: Build failed on CI"
+context:
+  location: "home-office"
+  work_hours:
+    start: "09:00"
+    end: "18:00"
+  log_interval_seconds: 30
+
+calendar:
+  busy_blocks:
+    - name: "Daily Standup"
+      days: ["mon", "tue", "wed", "thu", "fri"]
+      start: "10:00"
+      end: "10:30"
+    - name: "Lunch"
+      days: ["mon", "tue", "wed", "thu", "fri"]
+      start: "13:00"
+      end: "14:00"
+
+feedback:
+  enabled: true
+  prompt: true

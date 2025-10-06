@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Any, Dict
 import copy
 import os
 import yaml
@@ -10,6 +10,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "emotion_interval_seconds": 1,
         "decision_interval_seconds": 2,
         "demo_notification_period_seconds": 30,
+    },
+    "notifications": {
+        "title_prefix": "[FocusFrame]",
+        "poll_interval_seconds": 5,
+        "demo_payloads": ["Demo notification"],
+        "sources": [
+            {
+                "id": "demo",
+                "type": "demo",
+                "enabled": True,
+                "interval_seconds": 30,
+            }
+        ],
     },
     "deferral": {
         "focus_deferral_minutes": 15,
@@ -37,9 +50,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "focus": [],
         "casual": [],
     },
-    "notifications": {
-        "title_prefix": "[FocusFrame]",
-        "demo_payloads": ["Demo notification"],
+    "context": {
+        "location": "unspecified",
+        "work_hours": {
+            "start": "09:00",
+            "end": "17:00",
+        },
+        "log_interval_seconds": 30,
+    },
+    "calendar": {
+        "busy_blocks": []
+    },
+    "feedback": {
+        "enabled": True,
+        "prompt": True,
     },
 }
 
@@ -75,6 +99,18 @@ class Config:
     @property
     def onnx(self) -> Dict[str, Any]:
         return self.raw.get("onnx", {})
+
+    @property
+    def context(self) -> Dict[str, Any]:
+        return self.raw.get("context", {})
+
+    @property
+    def calendar(self) -> Dict[str, Any]:
+        return self.raw.get("calendar", {})
+
+    @property
+    def feedback(self) -> Dict[str, Any]:
+        return self.raw.get("feedback", {})
 
 
 def load_config(path: str = "config.yaml") -> Config:

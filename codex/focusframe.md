@@ -95,3 +95,7 @@ python -m focusframe.main --demo
 - Tuned sampling + smoothing for faster FER updates and added history fallback
 - Refreshed dashboard UI with confidence bar, timeline bars, and stats panel
 
+
+## Update - 2025-10-06
+- Phase 3 complete (adaptive insights, sentiment/tag enrichment, reporting menu)
+- Review 3 TODO: desktop packaging + tray controls, onboarding/profile selector, plugin & integration examples

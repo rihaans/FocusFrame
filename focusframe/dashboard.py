@@ -12,6 +12,12 @@ from .reports import summary_text, export_events
 from .rules import DEFAULT_RULES
 from .storage import Store
 
+try:
+    from .gcal import GoogleCalendarManager, GCAL_AVAILABLE
+except ImportError:
+    GCAL_AVAILABLE = False
+    GoogleCalendarManager = None
+
 
 class LiveFeedTab:
     MAX_HISTORY = 40
@@ -52,10 +58,12 @@ class LiveFeedTab:
             current_card,
             height=8,
             width=48,
-            bg="#10131a",
-            fg="#d8e2ff",
+            bg="#0f1419",
+            fg="#e2e8f0",
             bd=0,
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground="#2d3748",
+            highlightcolor="#6366f1",
             font=("Consolas", 11),
             state="disabled",
         )
@@ -72,10 +80,12 @@ class LiveFeedTab:
             history_card,
             height=12,
             width=44,
-            bg="#0d111a",
-            fg="#d8e2ff",
+            bg="#0f1419",
+            fg="#e2e8f0",
             bd=0,
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground="#2d3748",
+            highlightcolor="#6366f1",
             font=("Consolas", 11),
             state="disabled",
         )
@@ -95,8 +105,9 @@ class LiveFeedTab:
         self.timeline_canvas = tk.Canvas(
             timeline_card,
             height=140,
-            bg="#0d111a",
-            highlightthickness=0,
+            bg="#0f1419",
+            highlightthickness=1,
+            highlightbackground="#2d3748",
             bd=0,
         )
         self.timeline_canvas.pack(fill="both", expand=True, pady=(12, 0))
@@ -194,7 +205,10 @@ class LiveFeedTab:
         self.meta_label.config(text=text)
 
     def _render_context(self, context: Dict[str, object]) -> None:
+        import datetime as dt
+
         summary_keys = [
+            ("timestamp", "Time"),
             ("active_app", "App"),
             ("app_category", "Category"),
             ("day_segment", "Segment"),
@@ -205,17 +219,39 @@ class LiveFeedTab:
             ("net_bytes_sent", "Net Sent"),
             ("net_bytes_recv", "Net Recv"),
             ("top_process", "Top Proc"),
+            ("battery_percent", "Battery"),
         ]
         rows = []
         for key, label in summary_keys:
             value = context.get(key)
             if value is None:
                 continue
-            if isinstance(value, float):
+
+            # Format different data types appropriately
+            if key == "timestamp" and isinstance(value, (int, float)):
+                # Format timestamp as readable time
+                value = dt.datetime.fromtimestamp(value).strftime("%H:%M:%S")
+            elif key == "battery_percent":
+                # Handle battery display
+                battery_plugged = context.get("battery_plugged")
+                if battery_plugged:
+                    value = "AC Power"
+                elif isinstance(value, (int, float)):
+                    value = f"{value:.0f}%"
+            elif isinstance(value, float):
                 if "percent" in key:
-                    value = f"{value:.1f}"
+                    value = f"{value:.1f}%"
                 elif "net_bytes" in key:
-                    value = f"{value/1024/1024:.1f} MB"
+                    # Convert bytes to human-readable format
+                    if value < 1024:
+                        value = f"{value:.0f} B"
+                    elif value < 1024 * 1024:
+                        value = f"{value/1024:.1f} KB"
+                    elif value < 1024 * 1024 * 1024:
+                        value = f"{value/1024/1024:.1f} MB"
+                    else:
+                        value = f"{value/1024/1024/1024:.2f} GB"
+
             rows.append(f"{label:>10}: {value}")
         buffer = "\n".join(rows) if rows else "Context unavailable"
         self.context_text.configure(state="normal")
@@ -598,16 +634,17 @@ class InsightsTab:
 
 
 class Dashboard:
-    def __init__(self, store: Store, db_path: Optional[str] = None) -> None:
+    def __init__(self, store: Store, db_path: Optional[str] = None, context_manager=None) -> None:
         self.store = store
         self.db_path = db_path or store.path
         self.analytics = Analytics(self.db_path)
+        self.context_manager = context_manager
 
         self.root = tk.Tk()
-        self.root.title("FocusFrame")
-        self.root.geometry("960x640")
-        self.root.configure(bg="#10131a")
-        self.root.minsize(880, 560)
+        self.root.title("FocusFrame - Premium Edition")
+        self.root.geometry("1024x720")
+        self.root.configure(bg="#0a0e17")
+        self.root.minsize(920, 600)
         self.root.protocol("WM_DELETE_WINDOW", self.stop)
 
         self.style = ttk.Style(self.root)
@@ -615,11 +652,70 @@ class Dashboard:
             self.style.theme_use("clam")
         except (tk.TclError, RuntimeError):
             pass
-        self.style.configure("Card.TFrame", background="#151b29")
-        self.style.configure("Card.TLabel", background="#151b29", foreground="#f5f5f5", font=("Segoe UI", 12))
-        self.style.configure("Title.TLabel", background="#10131a", foreground="#8ab4ff", font=("Segoe UI", 16, "bold"))
-        self.style.configure("Emotion.TLabel", background="#151b29", foreground="#ffffff", font=("Segoe UI", 42, "bold"))
-        self.style.configure("Meta.TLabel", background="#151b29", foreground="#aeb9d6", font=("Segoe UI", 11))
+
+        # Premium color scheme
+        bg_primary = "#0a0e17"      # Deep dark blue
+        bg_secondary = "#1a1f2e"    # Card background
+        bg_tertiary = "#0f1419"     # Darker panels
+        accent_primary = "#6366f1"  # Indigo accent
+        accent_secondary = "#8b5cf6" # Purple accent
+        text_primary = "#f8fafc"    # Near white
+        text_secondary = "#cbd5e1"  # Light gray
+        text_muted = "#94a3b8"      # Muted gray
+
+        # Configure styles with premium look
+        self.style.configure("Card.TFrame", background=bg_secondary, relief="flat")
+        self.style.configure("Card.TLabel",
+            background=bg_secondary,
+            foreground=text_primary,
+            font=("Segoe UI", 11, "bold"))
+        self.style.configure("Title.TLabel",
+            background=bg_primary,
+            foreground=accent_primary,
+            font=("Segoe UI", 18, "bold"))
+        self.style.configure("Emotion.TLabel",
+            background=bg_secondary,
+            foreground=text_primary,
+            font=("Segoe UI", 44, "bold"))
+        self.style.configure("Meta.TLabel",
+            background=bg_secondary,
+            foreground=text_muted,
+            font=("Segoe UI", 10))
+
+        # Enhanced button styles
+        self.style.configure("TButton",
+            background=accent_primary,
+            foreground=text_primary,
+            borderwidth=0,
+            focuscolor="none",
+            font=("Segoe UI", 10, "bold"),
+            padding=(12, 8))
+        self.style.map("TButton",
+            background=[("active", accent_secondary), ("pressed", "#7c3aed")],
+            foreground=[("disabled", text_muted)])
+
+        # Enhanced notebook (tabs) style
+        self.style.configure("TNotebook",
+            background=bg_primary,
+            borderwidth=0)
+        self.style.configure("TNotebook.Tab",
+            background=bg_tertiary,
+            foreground=text_secondary,
+            padding=(16, 10),
+            font=("Segoe UI", 10, "bold"))
+        self.style.map("TNotebook.Tab",
+            background=[("selected", bg_secondary)],
+            foreground=[("selected", accent_primary)],
+            expand=[("selected", (2, 2, 2, 0))])
+
+        # Enhanced progressbar style
+        self.style.configure("TProgressbar",
+            troughcolor=bg_tertiary,
+            background=accent_primary,
+            darkcolor=accent_primary,
+            lightcolor=accent_secondary,
+            borderwidth=0,
+            thickness=8)
 
         self._build_menu()
 
@@ -635,10 +731,23 @@ class Dashboard:
 
     def _build_menu(self) -> None:
         menubar = tk.Menu(self.root)
+
+        # Reports menu
         reports_menu = tk.Menu(menubar, tearoff=0)
         reports_menu.add_command(label="Copy Summary", command=self.copy_summary)
         reports_menu.add_command(label="Export Events to CSV", command=self.export_events_csv)
         menubar.add_cascade(label="Reports", menu=reports_menu)
+
+        # Calendar menu (only if Google Calendar is available)
+        if GCAL_AVAILABLE:
+            calendar_menu = tk.Menu(menubar, tearoff=0)
+            calendar_menu.add_command(label="Connect Google Calendar", command=self.connect_google_calendar)
+            calendar_menu.add_command(label="Disconnect Google Calendar", command=self.disconnect_google_calendar)
+            calendar_menu.add_separator()
+            calendar_menu.add_command(label="View Upcoming Events", command=self.view_upcoming_events)
+            calendar_menu.add_command(label="Check Calendar Status", command=self.check_calendar_status)
+            menubar.add_cascade(label="Calendar", menu=calendar_menu)
+
         self.root.config(menu=menubar)
 
     def copy_summary(self) -> None:
@@ -666,6 +775,125 @@ class Dashboard:
             messagebox.showerror("Reports", f"Failed to export: {exc}")
             return
         messagebox.showinfo("Reports", f"Exported events to {destination}")
+
+    def connect_google_calendar(self) -> None:
+        """Connect to Google Calendar."""
+        if not GCAL_AVAILABLE:
+            messagebox.showerror(
+                "Google Calendar",
+                "Google Calendar integration not available.\n\n"
+                "Please install required packages:\n"
+                "pip install google-auth google-auth-oauthlib google-api-python-client"
+            )
+            return
+
+        if not self.context_manager:
+            messagebox.showerror("Google Calendar", "Context manager not available.")
+            return
+
+        # Check if already connected
+        if self.context_manager.use_google_calendar:
+            messagebox.showinfo("Google Calendar", "Already connected to Google Calendar!")
+            return
+
+        # Try to initialize and authenticate
+        try:
+            if not self.context_manager.gcal_manager:
+                from .gcal import GoogleCalendarManager
+                self.context_manager.gcal_manager = GoogleCalendarManager()
+
+            if self.context_manager.gcal_manager.authenticate():
+                self.context_manager.use_google_calendar = True
+                messagebox.showinfo(
+                    "Google Calendar",
+                    "Successfully connected to Google Calendar!\n\n"
+                    "Calendar events will now be used for context awareness."
+                )
+            else:
+                messagebox.showerror(
+                    "Google Calendar",
+                    "Failed to authenticate with Google Calendar.\n\n"
+                    "Please ensure you have credentials.json in the project directory."
+                )
+        except Exception as exc:
+            messagebox.showerror("Google Calendar", f"Error connecting to Google Calendar:\n{exc}")
+
+    def disconnect_google_calendar(self) -> None:
+        """Disconnect from Google Calendar."""
+        if not self.context_manager or not self.context_manager.gcal_manager:
+            messagebox.showinfo("Google Calendar", "Not connected to Google Calendar.")
+            return
+
+        try:
+            self.context_manager.gcal_manager.disconnect()
+            self.context_manager.use_google_calendar = False
+            messagebox.showinfo(
+                "Google Calendar",
+                "Disconnected from Google Calendar.\n\n"
+                "Will use static calendar configuration."
+            )
+        except Exception as exc:
+            messagebox.showerror("Google Calendar", f"Error disconnecting:\n{exc}")
+
+    def view_upcoming_events(self) -> None:
+        """View upcoming calendar events."""
+        if not self.context_manager or not self.context_manager.gcal_manager:
+            messagebox.showinfo("Google Calendar", "Not connected to Google Calendar.")
+            return
+
+        try:
+            events = self.context_manager.gcal_manager.get_current_events(max_results=10)
+
+            if not events:
+                messagebox.showinfo("Google Calendar", "No upcoming events found.")
+                return
+
+            # Format events for display
+            event_list = []
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                summary = event.get('summary', 'No title')
+
+                # Parse and format start time
+                try:
+                    if 'T' in start:
+                        import datetime as dt
+                        start_time = dt.datetime.fromisoformat(start.replace('Z', '+00:00'))
+                        formatted_time = start_time.strftime("%b %d, %I:%M %p")
+                    else:
+                        formatted_time = start
+                    event_list.append(f"• {summary}\n  {formatted_time}")
+                except Exception:
+                    event_list.append(f"• {summary}\n  {start}")
+
+            message = "Upcoming Events:\n\n" + "\n\n".join(event_list[:10])
+            messagebox.showinfo("Google Calendar", message)
+
+        except Exception as exc:
+            messagebox.showerror("Google Calendar", f"Error fetching events:\n{exc}")
+
+    def check_calendar_status(self) -> None:
+        """Check current calendar status."""
+        if not self.context_manager:
+            messagebox.showinfo("Calendar Status", "Context manager not available.")
+            return
+
+        if self.context_manager.use_google_calendar and self.context_manager.gcal_manager:
+            try:
+                status, event = self.context_manager.gcal_manager.get_current_event_status()
+                if status == "busy" and event:
+                    message = f"Status: Busy\nCurrent Event: {event}"
+                else:
+                    message = "Status: Free\nNo current events"
+                messagebox.showinfo("Calendar Status", message)
+            except Exception as exc:
+                messagebox.showerror("Calendar Status", f"Error checking status:\n{exc}")
+        else:
+            messagebox.showinfo(
+                "Calendar Status",
+                "Using static calendar configuration.\n\n"
+                "Connect to Google Calendar for real-time event tracking."
+            )
 
     def push_emotion(self, emotion: str, score: float) -> None:
         self.live_tab.push_emotion(emotion, score)

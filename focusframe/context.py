@@ -8,6 +8,12 @@ import psutil
 
 from .apptracker import get_foreground_process_name
 
+try:
+    from .gcal import GoogleCalendarManager, GCAL_AVAILABLE
+except ImportError:
+    GCAL_AVAILABLE = False
+    GoogleCalendarManager = None
+
 
 def _parse_time(value: str) -> dt.time:
     hour, minute = value.split(":", 1)
@@ -105,6 +111,24 @@ class ContextManager:
         self.calendar = CalendarPlanner(calendar_cfg.get("busy_blocks", []))
         self.apps_cfg = apps_cfg
 
+        # Initialize Google Calendar if enabled and available
+        self.gcal_manager: Optional[GoogleCalendarManager] = None
+        self.use_google_calendar = False
+        if GCAL_AVAILABLE and calendar_cfg.get("use_google_calendar", False):
+            try:
+                credentials_path = calendar_cfg.get("google_credentials_path", "credentials.json")
+                token_path = calendar_cfg.get("google_token_path", "token.pickle")
+                self.gcal_manager = GoogleCalendarManager(credentials_path, token_path)
+                # Try to authenticate (will use cached token if available)
+                if self.gcal_manager.is_authenticated() or self.gcal_manager.authenticate():
+                    self.use_google_calendar = True
+                    print("[FocusFrame] Google Calendar integration enabled")
+                else:
+                    print("[FocusFrame] Google Calendar authentication failed, using static calendar")
+            except Exception as e:
+                print(f"[FocusFrame] Error initializing Google Calendar: {e}")
+                print("[FocusFrame] Falling back to static calendar")
+
     def snapshot(self) -> ContextSnapshot:
         now = dt.datetime.now()
 
@@ -112,7 +136,18 @@ class ContextManager:
         app_category = self._categorize_app(active_app)
         idle_seconds = _system_idle_seconds()
         day_segment = _day_segment(now)
-        calendar_state, calendar_event = self.calendar.current_state(now)
+
+        # Get calendar state from Google Calendar or static planner
+        if self.use_google_calendar and self.gcal_manager:
+            try:
+                calendar_state, calendar_event = self.gcal_manager.get_current_event_status()
+            except Exception as e:
+                print(f"[FocusFrame] Error fetching Google Calendar status: {e}")
+                # Fall back to static calendar
+                calendar_state, calendar_event = self.calendar.current_state(now)
+        else:
+            calendar_state, calendar_event = self.calendar.current_state(now)
+
         is_work_hours = self._within_work_hours(now.time())
         cpu_percent = psutil.cpu_percent(interval=0.0)
         memory_percent = psutil.virtual_memory().percent

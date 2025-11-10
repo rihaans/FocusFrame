@@ -117,9 +117,9 @@ def main() -> None:
     detector, emotion_reader, backend_name = build_detector(args, cfg)
     store = Store()
     scheduler = Scheduler(batch_release_minutes=cfg.batching["release_interval_minutes"])
-    dashboard = Dashboard(store=store)
-    rule_engine = RuleEngine(store, cfg)
     context_manager = ContextManager(cfg.context, cfg.calendar, cfg.apps)
+    dashboard = Dashboard(store=store, context_manager=context_manager)
+    rule_engine = RuleEngine(store, cfg)
     notification_sources = build_sources(cfg.notifications, demo_mode=args.demo)
     notification_manager = NotificationManager(notification_sources)
 

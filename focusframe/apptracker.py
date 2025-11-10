@@ -31,3 +31,5 @@ def get_foreground_process_name() -> str:
         pass
 
     return "unknown"
+
+

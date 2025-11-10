@@ -99,3 +99,5 @@ python -m focusframe.main --demo
 ## Update - 2025-10-06
 - Phase 3 complete (adaptive insights, sentiment/tag enrichment, reporting menu)
 - Review 3 TODO: desktop packaging + tray controls, onboarding/profile selector, plugin & integration examples
+
+
